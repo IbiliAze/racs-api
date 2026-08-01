@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/racs?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: racsuser
+    password: racspass
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jwt:
+    refresh-cookie-secure: true
+
+  jpa:
+    show-sql: true
+
+server:
+  port: 3443
+  http-port: 5001

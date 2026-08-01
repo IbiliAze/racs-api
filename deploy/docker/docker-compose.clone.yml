@@ -1,0 +1,16 @@
+services:
+  racs-clone:
+    image: racs:${TAG:-latest}
+    environment:
+      SPRING_PROFILES_ACTIVE: clone
+      JWT_SECRET: ${JWT_SECRET}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+    networks: [monitoring-network, db-network]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+networks:
+  monitoring-network: { external: true }
+  db-network: { external: true }

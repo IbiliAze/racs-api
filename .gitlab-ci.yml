@@ -1,0 +1,71 @@
+stages:
+  - deploy
+
+.deploy:
+  stage: deploy
+  tags:
+    - $RUNNER_TAG
+  only:
+    - main
+
+# One image serves all three environments — Spring profiles pick the config,
+# not separate builds. Rebuilding per matrix entry (instead of build-once/
+# deploy-thrice) matches the other projects' pattern, since matrix jobs aren't
+# guaranteed to land on the same runner host.
+#
+# live runs on app-primary; clone and test run on senan-server — a separate,
+# standalone host with its own local mysql/proxy_nginx/overlay networks (not
+# swarm-joined to app-primary). The mysql:3306 / racs-$NAME:5000 service names
+# below resolve on whichever host the job actually runs on.
+deploy:backend:
+  extends: .deploy
+  parallel:
+    matrix:
+      - NAME: live
+        RUNNER_TAG: app-primary
+        CONF_FILE: racs.conf
+        JWT_VAR: JWT_SECRET_LIVE
+        DB_USER_VAR: DB_USERNAME_LIVE
+        DB_PASS_VAR: DB_PASSWORD_LIVE
+      - NAME: clone
+        RUNNER_TAG: senan-server
+        CONF_FILE: racs-clone.conf
+        JWT_VAR: JWT_SECRET_CLONE
+        DB_USER_VAR: DB_USERNAME_CLONE
+        DB_PASS_VAR: DB_PASSWORD_CLONE
+      - NAME: test
+        RUNNER_TAG: senan-server
+        CONF_FILE: racs-test.conf
+        JWT_VAR: JWT_SECRET_TEST
+        DB_USER_VAR: DB_USERNAME_TEST
+        DB_PASS_VAR: DB_PASSWORD_TEST
+  script:
+    # Unique tag per pipeline so Swarm always sees a new image reference and
+    # redeploys — even when only a CI/CD variable changed and the commit didn't.
+    - export TAG="$CI_PIPELINE_ID"
+    - export JWT_SECRET="${!JWT_VAR}"
+    - export DB_USERNAME="${!DB_USER_VAR}"
+    - export DB_PASSWORD="${!DB_PASS_VAR}"
+    - docker build -t racs:$TAG .
+    - docker stack deploy --resolve-image never -c deploy/docker/docker-compose.$NAME.yml racs-$NAME
+    # Self-signed wildcard cert for the base domain, created once (flock + guard
+    # so the 3 parallel jobs don't race). Mounted into the proxy at /etc/nginx/ssl.
+    - |
+      sudo mkdir -p /opt/stacks/proxy/ssl
+      sudo flock /opt/stacks/proxy/ssl/.lock sh -c '
+        [ -f /opt/stacks/proxy/ssl/cert.pem ] || openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+          -keyout /opt/stacks/proxy/ssl/key.pem \
+          -out /opt/stacks/proxy/ssl/cert.pem \
+          -subj "/CN=*.eightmile.co.uk" \
+          -addext "subjectAltName=DNS:*.eightmile.co.uk,DNS:eightmile.co.uk"
+      '
+    - sudo cp deploy/nginx/$CONF_FILE /opt/stacks/proxy/conf.d/
+    - docker exec $(docker ps -q -f name=proxy_nginx) nginx -t
+    - docker exec $(docker ps -q -f name=proxy_nginx) nginx -s reload
+    # Drop older images to stop the host filling up.
+    - docker images "racs" --format '{{.Repository}}:{{.Tag}}' | grep -v ":$TAG$" | xargs -r docker rmi -f || true
+
+# Required CI/CD variables (Settings > CI/CD > Variables, masked):
+#   JWT_SECRET_LIVE, JWT_SECRET_CLONE, JWT_SECRET_TEST
+#   DB_USERNAME_LIVE, DB_USERNAME_CLONE, DB_USERNAME_TEST
+#   DB_PASSWORD_LIVE, DB_PASSWORD_CLONE, DB_PASSWORD_TEST
