@@ -13,12 +13,12 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import uk.co.eightmile.racs.auth.AuthContext;
+import uk.co.eightmile.racs.cards.Card;
+import uk.co.eightmile.racs.cards.dtos.CardDto;
 import uk.co.eightmile.racs.readers.Reader;
 import uk.co.eightmile.racs.readers.ReaderRepository;
-import uk.co.eightmile.racs.scans.dtos.CreateScanRequest;
-import uk.co.eightmile.racs.scans.dtos.ScanDto;
-import uk.co.eightmile.racs.scans.dtos.ScanRequestQueryParams;
-import uk.co.eightmile.racs.scans.dtos.UpdateScanRequest;
+import uk.co.eightmile.racs.scans.dtos.*;
 
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +37,8 @@ class ScanServiceTest {
     @Mock
     private ScanMapper scanMapper;
     @Mock
+    private AuthContext authContext;
+    @Mock
     private ReaderRepository readerRepository;
     @Mock
     private ApplicationEventPublisher notificationPublisher;
@@ -45,6 +47,7 @@ class ScanServiceTest {
 
     @Test
     void getScans() {
+        // Arrange
         var queryParams = new ScanRequestQueryParams();
         queryParams.setPage(2);
         queryParams.setSize(5);
@@ -65,8 +68,10 @@ class ScanServiceTest {
                 .thenReturn(new PageImpl<>(List.of(scan), PageRequest.of(1, 5), 6));
         when(scanMapper.toDto(scan)).thenReturn(scanDto);
 
+        // Act
         var response = scanService.getScans(queryParams);
 
+        // Assert
         assertThat(response.getScans()).containsExactly(scanDto);
         assertThat(response.getCurrentPage()).isEqualTo(2);
         assertThat(response.getTotalPages()).isEqualTo(2);
@@ -85,10 +90,61 @@ class ScanServiceTest {
     @Test
     void getScansWithCard(){
         // Arrange
+        var readerId = UUID.randomUUID();
+
+        var queryParams = new ScanRequestQueryParams();
+        queryParams.setPage(2);
+        queryParams.setSize(5);
+        queryParams.setSortBy("scannedValue:asc");
+
+        var scan = Scan.builder()
+                .id(UUID.randomUUID())
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("ABC123")
+                .build();
+
+        var card = Card.builder()
+                .id(UUID.randomUUID())
+                .value(scan.getScannedValue())
+                .label("Label 1")
+                .build();
+
+        scan.setCard(card);
+
+        CardDto cardDto = new CardDto();
+        cardDto.setId(card.getId());
+
+        ScanWithCardDto scanWithCardDto = new ScanWithCardDto();
+        scanWithCardDto.setId(scan.getId());
+        scanWithCardDto.setFlag(scan.getFlag());
+        scanWithCardDto.setScannedValue(scan.getScannedValue());
+        scanWithCardDto.setCard(cardDto);
+
+        when(authContext.getUserId()).thenReturn(readerId);
+        when(scanRepository.findAll(ArgumentMatchers.<Specification<Scan>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(scan), PageRequest.of(1, 5), 6));
+        when(scanMapper.toScanWithCardDto(scan)).thenReturn(scanWithCardDto);
 
         // Act
+        var response = scanService.getScansWithCard(queryParams);
 
         // Assert
+        assertThat(queryParams.getReaderId()).isEqualTo(readerId);
+        assertThat(response.getScansWithCard()).containsExactly(scanWithCardDto);
+        assertThat(response.getCurrentPage()).isEqualTo(2);
+        assertThat(response.getTotalPages()).isEqualTo(2);
+        assertThat(response.getTotalItems()).isEqualTo(6);
+        assertThat(response.getMessage()).isEqualTo("Scans fetched successfully");
+
+        var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(authContext).getUserId();
+        verify(scanMapper).toScanWithCardDto(scan);
+        verify(scanRepository).findAll(ArgumentMatchers.<Specification<Scan>>any(), pageableCaptor.capture());
+
+        var pageable = pageableCaptor.getValue();
+        assertThat(pageable.getPageNumber()).isEqualTo(1);
+        assertThat(pageable.getPageSize()).isEqualTo(5);
+        assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "scannedValue"));
     }
 
     @Test
