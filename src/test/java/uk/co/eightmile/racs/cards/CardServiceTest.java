@@ -15,12 +15,14 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.campaigns.CampaignMapper;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
+import uk.co.eightmile.racs.campaigns.exceptions.CampaignNotFoundException;
 import uk.co.eightmile.racs.cards.dtos.CardDto;
 import uk.co.eightmile.racs.cards.dtos.CardRequestQueryParams;
+import uk.co.eightmile.racs.cards.dtos.CreateCardRequest;
 import uk.co.eightmile.racs.cards.exceptions.CardNotFoundException;
 import uk.co.eightmile.racs.locations.LocationMapper;
 import uk.co.eightmile.racs.locations.LocationRepository;
-import uk.co.eightmile.racs.scans.Scan;
+import uk.co.eightmile.racs.readers.exceptions.ReaderNotFoundException;
 import uk.co.eightmile.racs.scans.ScanRepository;
 
 import java.util.List;
@@ -111,7 +113,50 @@ class CardServiceTest {
 
     void getCardByValue() {}
 
+    @Test
+    void getCardByValueThrowsWhenNotFound() {
+        // Arrange
+        var value = "123";
+
+        when(cardRepository.findByValue(value)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> cardService.getCardByValue(value))
+                .isInstanceOf(CardNotFoundException.class)
+                .hasMessage("Card not found");
+
+        verifyNoInteractions(cardMapper);
+    }
+
     void createCard() {}
+
+    @Test
+    void createCardThrowsWhenCampaignNotFound() {
+        // Arrange
+        var campaignId = "123";
+
+        var request = new CreateCardRequest();
+        request.setCampaignId(campaignId);
+        request.setValue("1234");
+        request.setLabel("Label");
+
+        var card = Card.builder()
+                .value(request.getValue())
+                .label(request.getLabel())
+                .build();
+
+        when(cardMapper.toEntity(request)).thenReturn(card);
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> cardService.createCard(request))
+                .isInstanceOf(CampaignNotFoundException.class)
+                .hasMessage("Campaign not found");
+
+        verify(cardRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(notificationPublisher);
+
+    }
 
     void createCards() {}
 
