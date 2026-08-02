@@ -105,4 +105,34 @@ class ScanServiceTest {
         verify(scanRepository).findById(scanId);
         verify(scanMapper).toDto(scan);
     }
+
+    @Test
+    void getScanByCardValue() {
+        // Arrange
+        String scannedValue = "123";
+        var scan = Scan.builder()
+                .id(UUID.randomUUID())
+                .flag(FlagType.PASSED_OK)
+                .scannedValue(scannedValue)
+                .build();
+
+        var scanDto = new ScanDto();
+        scanDto.setId(scan.getId());
+        scanDto.setFlag(scan.getFlag());
+        scanDto.setScannedValue(scan.getScannedValue());
+
+        when(scanRepository.findByScannedValue(scannedValue)).thenReturn(Optional.of(scan));
+        when(scanMapper.toDto(scan)).thenReturn(scanDto);
+
+        // Act
+        var response = scanService.getScanByCardValue(scannedValue);
+
+        // Assert
+        assertThat(response).isNotNull();
+        assertThat(response.getScan()).isEqualTo(scanDto);
+        assertThat(response.getMessage()).isEqualTo("Scan fetched successfully");
+
+        verify(scanRepository).findByScannedValue(scannedValue);
+        verify(scanMapper).toDto(scan);
+    }
 }
