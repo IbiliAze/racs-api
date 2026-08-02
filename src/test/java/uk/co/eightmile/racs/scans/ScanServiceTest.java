@@ -7,13 +7,18 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import uk.co.eightmile.racs.readers.Reader;
+import uk.co.eightmile.racs.readers.ReaderRepository;
+import uk.co.eightmile.racs.scans.dtos.CreateScanRequest;
 import uk.co.eightmile.racs.scans.dtos.ScanDto;
 import uk.co.eightmile.racs.scans.dtos.ScanRequestQueryParams;
+import uk.co.eightmile.racs.scans.dtos.UpdateScanRequest;
 
 import java.util.List;
 import java.util.Optional;
@@ -31,6 +36,10 @@ class ScanServiceTest {
     private ScanRepository scanRepository;
     @Mock
     private ScanMapper scanMapper;
+    @Mock
+    private ReaderRepository readerRepository;
+    @Mock
+    private ApplicationEventPublisher notificationPublisher;
     @InjectMocks
     private ScanService scanService;
 
@@ -74,7 +83,13 @@ class ScanServiceTest {
     }
 
     @Test
-    void getScansWithCard(){}
+    void getScansWithCard(){
+        // Arrange
+
+        // Act
+
+        // Assert
+    }
 
     @Test
     void getScanById(){
@@ -134,5 +149,123 @@ class ScanServiceTest {
 
         verify(scanRepository).findByScannedValue(scannedValue);
         verify(scanMapper).toDto(scan);
+    }
+
+    @Test
+    void createScan() {
+        // Arrange
+        var readerId = UUID.randomUUID();
+
+        var request = new CreateScanRequest();
+        request.setReaderId(readerId);
+        request.setFlag(FlagType.PASSED_OK);
+        request.setScannedValue("123");
+
+        var reader = new Reader();
+        reader.setId(readerId);
+
+        var scan = Scan.builder()
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var savedScan = Scan.builder()
+                .id(UUID.randomUUID())
+                .reader(reader)
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var scanDto = new ScanDto();
+        scanDto.setId(savedScan.getId());
+        scanDto.setFlag(savedScan.getFlag());
+        scanDto.setScannedValue(savedScan.getScannedValue());
+
+        when(scanMapper.toEntity(request)).thenReturn(scan);
+        when(readerRepository.findById(readerId)).thenReturn(Optional.of(reader));
+        when(scanRepository.existsByCardValueAndFlag("123", FlagType.PASSED_OK))
+                .thenReturn(false);
+        when(scanRepository.saveAndFlush(scan)).thenReturn(savedScan);
+        when(scanMapper.toDto(savedScan)).thenReturn(scanDto);
+
+        // Act
+        var response = scanService.createScan(request);
+
+        // Assert
+        assertThat(response.getScan()).isEqualTo(scanDto);
+        assertThat(response.getMessage()).isEqualTo("Scan created successfully");
+        assertThat(scan.getReader()).isSameAs(reader);
+        assertThat(reader.getScans()).contains(scan);
+
+        verify(scanRepository).saveAndFlush(scan);
+        verify(notificationPublisher)
+                .publishEvent(new ScanUpdate(scanDto, ScanAction.created));
+    }
+
+    @Test
+    void updateScan() {
+        // Arrange
+        var scanId = UUID.randomUUID();
+
+        var request = new UpdateScanRequest();
+        request.setFlag(FlagType.PASSED_OK);
+
+        var scan = Scan.builder()
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var scanDto = new ScanDto();
+        scanDto.setId(scan.getId());
+        scanDto.setFlag(scan.getFlag());
+        scanDto.setScannedValue(scan.getScannedValue());
+
+        when(scanRepository.findById(scanId)).thenReturn(Optional.of(scan));
+        when(scanMapper.toDto(scan)).thenReturn(scanDto);
+
+        // Act
+        var response = scanService.updateScan(scanId, request);
+
+        // Assert
+        assertThat(response.getScan()).isEqualTo(scanDto);
+        assertThat(response.getMessage()).isEqualTo("Scan updated successfully");
+
+        verify(scanRepository).save(scan);
+        verify(notificationPublisher)
+                .publishEvent(new ScanUpdate(scanDto, ScanAction.updated));
+
+    }
+
+    @Test
+    void deleteScan() {
+        // Arrange
+        var scanId = UUID.randomUUID();
+
+        var scan = Scan.builder()
+                .id(scanId)
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var scanDto = new ScanDto();
+        scanDto.setId(scan.getId());
+        scanDto.setFlag(scan.getFlag());
+        scanDto.setScannedValue(scan.getScannedValue());
+
+        when(scanRepository.findById(scanId)).thenReturn(Optional.of(scan));
+        when(scanMapper.toDto(scan)).thenReturn(scanDto);
+
+        // Act
+        var response = scanService.deleteScan(scanId);
+
+        // Assert
+        assertThat(response.getScan()).isEqualTo(scanDto);
+        assertThat(response.getMessage()).isEqualTo("Scan deleted successfully");
+
+        verify(scanRepository).findById(scanId);
+        verify(scanRepository).delete(scan);
+        verify(scanMapper).toDto(scan);
+        verify(notificationPublisher)
+                .publishEvent(new ScanUpdate(scanDto, ScanAction.deleted));
     }
 }
