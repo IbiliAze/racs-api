@@ -15,18 +15,26 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.auth.AuthContext;
 import uk.co.eightmile.racs.cards.Card;
+import uk.co.eightmile.racs.cards.CardRepository;
 import uk.co.eightmile.racs.cards.dtos.CardDto;
+import uk.co.eightmile.racs.cards.exceptions.CardNotFoundException;
 import uk.co.eightmile.racs.readers.Reader;
 import uk.co.eightmile.racs.readers.ReaderRepository;
+import uk.co.eightmile.racs.readers.exceptions.ReaderNotFoundException;
 import uk.co.eightmile.racs.scans.dtos.*;
+import uk.co.eightmile.racs.scans.exceptions.AlreadyPassedException;
+import uk.co.eightmile.racs.scans.exceptions.ScanNotFoundException;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,6 +48,8 @@ class ScanServiceTest {
     private AuthContext authContext;
     @Mock
     private ReaderRepository readerRepository;
+    @Mock
+    private CardRepository cardRepository;
     @Mock
     private ApplicationEventPublisher notificationPublisher;
     @InjectMocks
@@ -148,6 +158,29 @@ class ScanServiceTest {
     }
 
     @Test
+    void getScansWithCardWhenNoAuthenticatedReader() {
+        // Arrange
+        var queryParams = new ScanRequestQueryParams();
+        queryParams.setPage(1);
+        queryParams.setSize(5);
+
+        when(authContext.getUserId()).thenReturn(null);
+        when(scanRepository.findAll(ArgumentMatchers.<Specification<Scan>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 5), 0));
+
+        // Act
+        var response = scanService.getScansWithCard(queryParams);
+
+        // Assert
+        assertThat(queryParams.getReaderId()).isNull();
+        assertThat(response.getScansWithCard()).isEmpty();
+        assertThat(response.getCurrentPage()).isEqualTo(1);
+        assertThat(response.getTotalItems()).isZero();
+
+        verify(scanMapper, never()).toScanWithCardDto(any());
+    }
+
+    @Test
     void getScanById(){
         // Arrange
         UUID scanId = UUID.randomUUID();
@@ -178,6 +211,21 @@ class ScanServiceTest {
     }
 
     @Test
+    void getScanByIdThrowsWhenNotFound() {
+        // Arrange
+        var scanId = UUID.randomUUID();
+
+        when(scanRepository.findById(scanId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.getScanById(scanId))
+                .isInstanceOf(ScanNotFoundException.class)
+                .hasMessage("Scan not found");
+
+        verifyNoInteractions(scanMapper);
+    }
+
+    @Test
     void getScanByCardValue() {
         // Arrange
         String scannedValue = "123";
@@ -205,6 +253,21 @@ class ScanServiceTest {
 
         verify(scanRepository).findByScannedValue(scannedValue);
         verify(scanMapper).toDto(scan);
+    }
+
+    @Test
+    void getScanByCardValueThrowsWhenNotFound() {
+        // Arrange
+        var scannedValue = "123";
+
+        when(scanRepository.findByScannedValue(scannedValue)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.getScanByCardValue(scannedValue))
+                .isInstanceOf(ScanNotFoundException.class)
+                .hasMessage("Scan not found");
+
+        verifyNoInteractions(scanMapper);
     }
 
     @Test
@@ -259,6 +322,166 @@ class ScanServiceTest {
     }
 
     @Test
+    void createScanWithCard() {
+        // Arrange
+        var readerId = UUID.randomUUID();
+        var cardId = UUID.randomUUID();
+
+        var request = new CreateScanRequest();
+        request.setReaderId(readerId);
+        request.setCardId(cardId);
+        request.setFlag(FlagType.PASSED_OK);
+        request.setScannedValue("123");
+
+        var reader = new Reader();
+        reader.setId(readerId);
+
+        var card = Card.builder()
+                .id(cardId)
+                .value("123")
+                .label("Label 1")
+                .build();
+
+        var scan = Scan.builder()
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var savedScan = Scan.builder()
+                .id(UUID.randomUUID())
+                .reader(reader)
+                .card(card)
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        var scanDto = new ScanDto();
+        scanDto.setId(savedScan.getId());
+        scanDto.setFlag(savedScan.getFlag());
+        scanDto.setScannedValue(savedScan.getScannedValue());
+
+        when(scanMapper.toEntity(request)).thenReturn(scan);
+        when(readerRepository.findById(readerId)).thenReturn(Optional.of(reader));
+        when(scanRepository.existsByCardValueAndFlag("123", FlagType.PASSED_OK))
+                .thenReturn(false);
+        when(cardRepository.findById(cardId)).thenReturn(Optional.of(card));
+        when(scanRepository.saveAndFlush(scan)).thenReturn(savedScan);
+        when(scanMapper.toDto(savedScan)).thenReturn(scanDto);
+
+        // Act
+        var response = scanService.createScan(request);
+
+        // Assert
+        assertThat(response.getScan()).isEqualTo(scanDto);
+        assertThat(response.getMessage()).isEqualTo("Scan created successfully");
+        assertThat(scan.getCard()).isSameAs(card);
+
+        verify(cardRepository).findById(cardId);
+        verify(scanRepository).saveAndFlush(scan);
+        verify(notificationPublisher)
+                .publishEvent(new ScanUpdate(scanDto, ScanAction.created));
+    }
+
+    @Test
+    void createScanThrowsWhenReaderNotFound() {
+        // Arrange
+        var readerId = UUID.randomUUID();
+
+        var request = new CreateScanRequest();
+        request.setReaderId(readerId);
+        request.setFlag(FlagType.PASSED_OK);
+        request.setScannedValue("123");
+
+        var scan = Scan.builder()
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        when(scanMapper.toEntity(request)).thenReturn(scan);
+        when(readerRepository.findById(readerId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.createScan(request))
+                .isInstanceOf(ReaderNotFoundException.class)
+                .hasMessage("Reader not found");
+
+        verify(scanRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(cardRepository, notificationPublisher);
+    }
+
+    @Test
+    void createScanThrowsWhenCardAlreadyPassed() {
+        // Arrange
+        var readerId = UUID.randomUUID();
+
+        var request = new CreateScanRequest();
+        request.setReaderId(readerId);
+        request.setFlag(FlagType.PASSED_OK);
+        request.setScannedValue("123");
+
+        var reader = new Reader();
+        reader.setId(readerId);
+
+        var scan = Scan.builder()
+                .flag(FlagType.PASSED_OK)
+                .scannedValue("123")
+                .build();
+
+        when(scanMapper.toEntity(request)).thenReturn(scan);
+        when(readerRepository.findById(readerId)).thenReturn(Optional.of(reader));
+        when(scanRepository.existsByCardValueAndFlag("123", FlagType.PASSED_OK))
+                .thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.createScan(request))
+                .isInstanceOf(AlreadyPassedException.class)
+                .hasMessage("Code already has passed");
+
+        // The duplicate attempt is still recorded, but flagged and never announced
+        assertThat(scan.getFlag()).isEqualTo(FlagType.DUPLICATE_ATTEMPT_SERVER);
+
+        verify(scanRepository).save(scan);
+        verify(scanRepository, never()).saveAndFlush(any());
+        verify(scanMapper, never()).toDto(any());
+        verifyNoInteractions(cardRepository, notificationPublisher);
+    }
+
+    @Test
+    void createScanThrowsWhenCardNotFound() {
+        // Arrange
+        var readerId = UUID.randomUUID();
+        var cardId = UUID.randomUUID();
+
+        var request = new CreateScanRequest();
+        request.setReaderId(readerId);
+        request.setCardId(cardId);
+        request.setFlag(FlagType.REJECTED);
+        request.setScannedValue("123");
+
+        var reader = new Reader();
+        reader.setId(readerId);
+
+        var scan = Scan.builder()
+                .flag(FlagType.REJECTED)
+                .scannedValue("123")
+                .build();
+
+        when(scanMapper.toEntity(request)).thenReturn(scan);
+        when(readerRepository.findById(readerId)).thenReturn(Optional.of(reader));
+        when(cardRepository.findById(cardId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.createScan(request))
+                .isInstanceOf(CardNotFoundException.class)
+                .hasMessage("Card not found");
+
+        assertThat(scan.getCard()).isNull();
+
+        verify(scanRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(notificationPublisher);
+    }
+
+    @Test
     void updateScan() {
         // Arrange
         var scanId = UUID.randomUUID();
@@ -287,9 +510,29 @@ class ScanServiceTest {
         assertThat(response.getMessage()).isEqualTo("Scan updated successfully");
 
         verify(scanRepository).save(scan);
+        verify(scanMapper).update(request, scan);
         verify(notificationPublisher)
                 .publishEvent(new ScanUpdate(scanDto, ScanAction.updated));
 
+    }
+
+    @Test
+    void updateScanThrowsWhenNotFound() {
+        // Arrange
+        var scanId = UUID.randomUUID();
+
+        var request = new UpdateScanRequest();
+        request.setFlag(FlagType.PASSED_OK);
+
+        when(scanRepository.findById(scanId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.updateScan(scanId, request))
+                .isInstanceOf(ScanNotFoundException.class)
+                .hasMessage("Scan not found");
+
+        verify(scanRepository, never()).save(any());
+        verifyNoInteractions(scanMapper, notificationPublisher);
     }
 
     @Test
@@ -323,5 +566,21 @@ class ScanServiceTest {
         verify(scanMapper).toDto(scan);
         verify(notificationPublisher)
                 .publishEvent(new ScanUpdate(scanDto, ScanAction.deleted));
+    }
+
+    @Test
+    void deleteScanThrowsWhenNotFound() {
+        // Arrange
+        var scanId = UUID.randomUUID();
+
+        when(scanRepository.findById(scanId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> scanService.deleteScan(scanId))
+                .isInstanceOf(ScanNotFoundException.class)
+                .hasMessage("Scan not found");
+
+        verify(scanRepository, never()).delete(any(Scan.class));
+        verifyNoInteractions(scanMapper, notificationPublisher);
     }
 }
