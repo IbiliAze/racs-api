@@ -1,11 +1,8 @@
 package uk.co.eightmile.racs.locations;
 
+import lombok.*;
 import uk.co.eightmile.racs.campaigns.Campaign;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -15,6 +12,7 @@ import java.util.UUID;
 
 @Getter
 @Setter
+@Builder
 @AllArgsConstructor
 @NoArgsConstructor
 @Entity
