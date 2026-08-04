@@ -6,14 +6,12 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import uk.co.eightmile.racs.cards.Card;
 import uk.co.eightmile.racs.locations.dtos.LocationDto;
 import uk.co.eightmile.racs.locations.dtos.LocationRequestQueryParams;
 
@@ -57,15 +55,16 @@ public class LocationServiceTest {
         when(locationRepository
                 .findAll(ArgumentMatchers.<Specification<Location>>any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(location), PageRequest.of(0, 5), 5));
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
 
         // Act
         var response = locationService.getLocations(queryParams);
 
         // Assert
         assertThat(response.getLocations()).containsExactly(locationDto);
-        assertThat(response.getCurrentPage()).isEqualTo(2);
-        assertThat(response.getTotalPages()).isEqualTo(2);
-        assertThat(response.getTotalItems()).isEqualTo(6);
+        assertThat(response.getCurrentPage()).isEqualTo(1);
+        assertThat(response.getTotalPages()).isEqualTo(1);
+        assertThat(response.getTotalItems()).isEqualTo(5);
         assertThat(response.getMessage()).isEqualTo("Locations fetched successfully");
 
         var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
@@ -75,6 +74,6 @@ public class LocationServiceTest {
         var pageable = pageableCaptor.getValue();
         assertThat(pageable.getPageNumber()).isEqualTo(0);
         assertThat(pageable.getPageSize()).isEqualTo(5);
-        assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "value"));
+        assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt"));
     }
 }
