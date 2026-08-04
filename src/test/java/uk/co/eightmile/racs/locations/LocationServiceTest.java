@@ -14,6 +14,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.locations.dtos.LocationDto;
 import uk.co.eightmile.racs.locations.dtos.LocationRequestQueryParams;
+import uk.co.eightmile.racs.locations.dtos.UpdateLocationRequest;
 import uk.co.eightmile.racs.locations.exceptions.LocationNotFoundException;
 
 import java.util.List;
@@ -91,6 +92,26 @@ public class LocationServiceTest {
                 .isInstanceOf(LocationNotFoundException.class)
                 .hasMessage("Location not found");
 
+        verifyNoInteractions(locationMapper);
+    }
+
+    @Test
+    void updateLocationThrowsWhenNotFound() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        var request = new UpdateLocationRequest();
+        request.setInactive(true);
+        request.setName("new name");
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> locationService.updateLocation(locationId, request))
+                .isInstanceOf(LocationNotFoundException.class)
+                .hasMessage("Location not found");
+
+        verify(locationRepository, never()).save(any());
         verifyNoInteractions(locationMapper);
     }
 }
