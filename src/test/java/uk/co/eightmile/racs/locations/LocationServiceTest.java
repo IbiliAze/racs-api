@@ -14,8 +14,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.locations.dtos.LocationDto;
 import uk.co.eightmile.racs.locations.dtos.LocationRequestQueryParams;
+import uk.co.eightmile.racs.locations.exceptions.LocationNotFoundException;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,5 +77,20 @@ public class LocationServiceTest {
         assertThat(pageable.getPageNumber()).isEqualTo(0);
         assertThat(pageable.getPageSize()).isEqualTo(5);
         assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt"));
+    }
+
+    @Test
+    void getLocationByIdThrowsWhenNotFound() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> locationService.getLocationById(locationId))
+                .isInstanceOf(LocationNotFoundException.class)
+                .hasMessage("Location not found");
+
+        verifyNoInteractions(locationMapper);
     }
 }
