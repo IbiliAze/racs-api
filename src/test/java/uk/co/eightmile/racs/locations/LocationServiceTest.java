@@ -12,6 +12,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import uk.co.eightmile.racs.locations.dtos.CreateLocationRequest;
 import uk.co.eightmile.racs.locations.dtos.LocationDto;
 import uk.co.eightmile.racs.locations.dtos.LocationRequestQueryParams;
 import uk.co.eightmile.racs.locations.dtos.UpdateLocationRequest;
@@ -81,6 +82,57 @@ public class LocationServiceTest {
     }
 
     @Test
+    void getLocationsReturnsEmptyPageWithoutMapping() {
+        // Arrange
+        var queryParams = new LocationRequestQueryParams();
+        queryParams.setPage(1);
+        queryParams.setSize(5);
+
+        when(locationRepository
+                .findAll(ArgumentMatchers.<Specification<Location>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 5), 0));
+
+        // Act
+        var response = locationService.getLocations(queryParams);
+
+        // Assert
+        assertThat(response.getLocations()).isEmpty();
+        assertThat(response.getTotalItems()).isZero();
+        assertThat(response.getTotalPages()).isZero();
+        assertThat(response.getCurrentPage()).isEqualTo(1);
+
+        verifyNoInteractions(locationMapper);
+    }
+
+    @Test
+    void getLocationById() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        var location = Location.builder()
+                .id(locationId)
+                .name("location-1")
+                .inactive(false)
+                .build();
+
+        var locationDto = new LocationDto();
+        locationDto.setId(locationId);
+        locationDto.setName(location.getName());
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.of(location));
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
+
+        // Act
+        var response = locationService.getLocationById(locationId);
+
+        // Assert
+        assertThat(response.getLocation()).isSameAs(locationDto);
+        assertThat(response.getMessage()).isEqualTo("Location fetched successfully");
+
+        verify(locationRepository).findById(locationId);
+    }
+
+    @Test
     void getLocationByIdThrowsWhenNotFound() {
         // Arrange
         var locationId = UUID.randomUUID();
@@ -93,6 +145,111 @@ public class LocationServiceTest {
                 .hasMessage("Location not found");
 
         verifyNoInteractions(locationMapper);
+    }
+
+    @Test
+    void createLocation() {
+        // Arrange
+        var request = new CreateLocationRequest();
+        request.setName("location-1");
+        request.setInactive(false);
+
+        // The mapper owns address construction, so the mapped entity carries one already
+        var address = new LocationAddress();
+        address.setAddressLine1("1 High Street");
+        address.setCity("London");
+
+        var location = Location.builder()
+                .id(UUID.randomUUID())
+                .name(request.getName())
+                .inactive(request.getInactive())
+                .address(address)
+                .build();
+
+        var locationDto = new LocationDto();
+        locationDto.setId(location.getId());
+        locationDto.setName(location.getName());
+
+        when(locationMapper.toEntity(request)).thenReturn(location);
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
+
+        // Act
+        var response = locationService.createLocation(request);
+
+        // Assert
+        assertThat(response.getLocation()).isSameAs(locationDto);
+        assertThat(response.getMessage()).isEqualTo("Location created successfully");
+
+        // The owning side of the one-to-one is wired up before the save
+        assertThat(address.getLocation()).isSameAs(location);
+
+        verify(locationRepository).save(location);
+    }
+
+    @Test
+    void createLocationWithoutAddress() {
+        // Arrange
+        var request = new CreateLocationRequest();
+        request.setName("location-1");
+        request.setInactive(true);
+
+        var location = Location.builder()
+                .id(UUID.randomUUID())
+                .name(request.getName())
+                .inactive(request.getInactive())
+                .build();
+
+        var locationDto = new LocationDto();
+        locationDto.setId(location.getId());
+
+        when(locationMapper.toEntity(request)).thenReturn(location);
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
+
+        // Act
+        var response = locationService.createLocation(request);
+
+        // Assert
+        assertThat(response.getLocation()).isSameAs(locationDto);
+        assertThat(location.getAddress()).isNull();
+
+        verify(locationRepository).save(location);
+    }
+
+    @Test
+    void updateLocation() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        var request = new UpdateLocationRequest();
+        request.setName("new name");
+        request.setInactive(true);
+
+        var address = new LocationAddress();
+        address.setAddressLine1("1 High Street");
+
+        var location = Location.builder()
+                .id(locationId)
+                .name("old name")
+                .inactive(false)
+                .address(address)
+                .build();
+
+        var locationDto = new LocationDto();
+        locationDto.setId(locationId);
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.of(location));
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
+
+        // Act
+        var response = locationService.updateLocation(locationId, request);
+
+        // Assert
+        assertThat(response.getLocation()).isSameAs(locationDto);
+        assertThat(response.getMessage()).isEqualTo("Location updated successfully");
+        assertThat(address.getLocation()).isSameAs(location);
+
+        verify(locationMapper).update(request, location);
+        verify(locationRepository).save(location);
     }
 
     @Test
