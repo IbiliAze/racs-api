@@ -114,4 +114,20 @@ public class LocationServiceTest {
         verify(locationRepository, never()).save(any());
         verifyNoInteractions(locationMapper);
     }
+
+    @Test
+    void deleteLocationThrowsWhenNotFound() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> locationService.deleteLocation(locationId))
+                .isInstanceOf(LocationNotFoundException.class)
+                .hasMessage("Location not found");
+
+        verify(locationRepository, never()).delete(any(Location.class));
+        verifyNoInteractions(locationMapper);
+    }
 }
