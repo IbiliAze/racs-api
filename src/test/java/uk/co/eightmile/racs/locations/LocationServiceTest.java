@@ -116,6 +116,34 @@ public class LocationServiceTest {
     }
 
     @Test
+    void deleteLocation() {
+        // Arrange
+        var locationId = UUID.randomUUID();
+
+        var location = Location.builder()
+                .id(locationId)
+                .name("Loc-1")
+                .inactive(false)
+                .build();
+
+        var locationDto = new LocationDto();
+        locationDto.setId(locationId);
+
+        when(locationRepository.findById(locationId)).thenReturn(Optional.of(location));
+        when(locationMapper.toDto(location)).thenReturn(locationDto);
+
+        // Act
+        var response = locationService.deleteLocation(locationId);
+
+        // Assert
+        assertThat(response.getLocation()).isSameAs(locationDto);
+        assertThat(response.getMessage()).isEqualTo("Location deleted successfully");
+
+        verify(locationRepository).findById(locationId);
+        verify(locationRepository).delete(location);
+    }
+
+    @Test
     void deleteLocationThrowsWhenNotFound() {
         // Arrange
         var locationId = UUID.randomUUID();
