@@ -142,10 +142,6 @@ public class RoleServiceTest {
                 .permissions(Set.of(permission))
                 .build();
 
-        var roleDto = new RoleDto();
-        roleDto.setId(roleId);
-        roleDto.setName(role.getName());
-
         when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
 
         // Act
@@ -153,5 +149,20 @@ public class RoleServiceTest {
 
         // Assert
         assertThat(permissions).containsExactly(permission);
+
+        verify(roleRepository).findById(roleId);
+    }
+
+    @Test
+    void getRolePermissionsThrowsWhenNotFound() {
+        // Arrange
+        var roleId = UUID.randomUUID();
+
+        when(roleRepository.findById(roleId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> roleService.getRolePermissions(roleId))
+                .isInstanceOf(RoleNotFoundException.class)
+                .hasMessage("Role not found");
     }
 }
