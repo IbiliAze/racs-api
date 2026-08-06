@@ -15,6 +15,7 @@ import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.common.builders.QueryBuilder;
 import uk.co.eightmile.racs.permissions.PermissionRepository;
 import uk.co.eightmile.racs.roles.dtos.GetRolesResponse;
+import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.roles.dtos.RoleRequestQueryParams;
 import uk.co.eightmile.racs.roles.specifications.RoleSpec;
 
@@ -49,33 +50,31 @@ public class RoleServiceTest {
 
         var role = Role.builder()
                 .id(UUID.randomUUID())
-                .name("location-1")
-                .inactive(false)
+                .name("role-1")
                 .build();
 
-        var locationDto = new LocationDto();
-        locationDto.setId(location.getId());
-        locationDto.setName(location.getName());
-        locationDto.setInactive(location.isInactive());
+        var roleDto = new RoleDto();
+        roleDto.setId(role.getId());
+        roleDto.setName(role.getName());
 
-        when(locationRepository
-                .findAll(ArgumentMatchers.<Specification<Location>>any(), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(location), PageRequest.of(0, 5), 5));
-        when(locationMapper.toDto(location)).thenReturn(locationDto);
+        when(roleRepository
+                .findAll(ArgumentMatchers.<Specification<Role>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(role), PageRequest.of(0, 5), 5));
+        when(roleMapper.toDto(role)).thenReturn(roleDto);
 
         // Act
-        var response = locationService.getLocations(queryParams);
+        var response = roleService.getRoles(queryParams);
 
         // Assert
-        assertThat(response.getLocations()).containsExactly(locationDto);
+        assertThat(response.getRoles()).containsExactly(roleDto);
         assertThat(response.getCurrentPage()).isEqualTo(1);
         assertThat(response.getTotalPages()).isEqualTo(1);
         assertThat(response.getTotalItems()).isEqualTo(5);
-        assertThat(response.getMessage()).isEqualTo("Locations fetched successfully");
+        assertThat(response.getMessage()).isEqualTo("Roles fetched successfully");
 
         var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(locationRepository).
-                findAll(ArgumentMatchers.<Specification<Location>>any(), pageableCaptor.capture());
+        verify(roleRepository).
+                findAll(ArgumentMatchers.<Specification<Role>>any(), pageableCaptor.capture());
 
         var pageable = pageableCaptor.getValue();
         assertThat(pageable.getPageNumber()).isEqualTo(0);
