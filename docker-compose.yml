@@ -1,0 +1,35 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/racs
+      DB_USERNAME: ${DB_USERNAME:-racsuser}
+      DB_PASSWORD: ${DB_PASSWORD:-racspass}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: racs
+      MYSQL_USER: ${DB_USERNAME:-racsuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-racspass}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_ROOT_PASSWORD:-rootpass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql_data:

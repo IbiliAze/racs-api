@@ -14,7 +14,7 @@ reader-to-reader synchronisation.
 1. Start the development database:
 
    ```bash
-   docker compose -f deploy/docker/docker-compose.dev.yml up -d
+   docker compose up -d mysql
    ```
 
 2. Create `.env` from `.env.example` and replace the placeholder with a strong
@@ -49,6 +49,11 @@ managed by Flyway migrations in `src/main/resources/db/migration`.
 
 ## Deployment
 
-Container and reverse-proxy definitions live under `deploy/`. Environment
-profiles are configured in `src/main/resources/application-*.yml`; provide
-database credentials and the JWT secret through the deployment environment.
+`docker-compose.yml` builds the API image and runs it alongside MySQL:
+
+```bash
+docker compose up -d
+```
+
+Provide `JWT_SECRET`, `DB_USERNAME`, and `DB_PASSWORD` via a `.env` file or
+your deployment environment. The API listens on port `5000`.
