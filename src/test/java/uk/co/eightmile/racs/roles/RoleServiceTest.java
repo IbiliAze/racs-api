@@ -4,27 +4,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.ArgumentCaptor;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
-import uk.co.eightmile.racs.common.builders.QueryBuilder;
 import uk.co.eightmile.racs.permissions.Authority;
 import uk.co.eightmile.racs.permissions.Permission;
 import uk.co.eightmile.racs.permissions.PermissionRepository;
 import uk.co.eightmile.racs.permissions.exceptions.PermissionNotFoundException;
 import uk.co.eightmile.racs.roles.dtos.CreateRoleRequest;
-import uk.co.eightmile.racs.roles.dtos.GetRolesResponse;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.roles.dtos.RoleRequestQueryParams;
 import uk.co.eightmile.racs.roles.dtos.UpdateRolePermissionsRequest;
 import uk.co.eightmile.racs.roles.dtos.UpdateRoleRequest;
 import uk.co.eightmile.racs.roles.exceptions.RoleNotFoundException;
-import uk.co.eightmile.racs.roles.specifications.RoleSpec;
 
 import java.util.HashSet;
 import java.util.List;
