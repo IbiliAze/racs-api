@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import uk.co.eightmile.racs.common.builders.QueryBuilder;
+import uk.co.eightmile.racs.permissions.Authority;
 import uk.co.eightmile.racs.permissions.Permission;
 import uk.co.eightmile.racs.permissions.PermissionRepository;
 import uk.co.eightmile.racs.roles.dtos.GetRolesResponse;
@@ -23,6 +24,7 @@ import uk.co.eightmile.racs.roles.specifications.RoleSpec;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -131,12 +133,14 @@ public class RoleServiceTest {
         // Arrange
         var roleId = UUID.randomUUID();
 
+        var permission = Permission.builder()
+                .id(Authority.ADMIN).build();
+
         var role = Role.builder()
                 .id(roleId)
                 .name("role-1")
+                .permissions(Set.of(permission))
                 .build();
-
-        var permission = Permission
 
         var roleDto = new RoleDto();
         roleDto.setId(roleId);
@@ -145,22 +149,9 @@ public class RoleServiceTest {
         when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
 
         // Act
-        var response = roleService.getRolePermissions(roleId);
+        var permissions = roleService.getRolePermissions(roleId);
 
         // Assert
-        assertThat(response.getRoles()).containsExactly(roleDto);
-        assertThat(response.getCurrentPage()).isEqualTo(1);
-        assertThat(response.getTotalPages()).isEqualTo(1);
-        assertThat(response.getTotalItems()).isEqualTo(5);
-        assertThat(response.getMessage()).isEqualTo("Roles fetched successfully");
-
-        var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(roleRepository).
-                findAll(ArgumentMatchers.<Specification<Role>>any(), pageableCaptor.capture());
-
-        var pageable = pageableCaptor.getValue();
-        assertThat(pageable.getPageNumber()).isEqualTo(0);
-        assertThat(pageable.getPageSize()).isEqualTo(5);
-        assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt"));
+        assertThat(permissions).containsExactly(permission);
     }
 }
