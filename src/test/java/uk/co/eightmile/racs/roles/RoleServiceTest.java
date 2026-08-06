@@ -17,6 +17,7 @@ import uk.co.eightmile.racs.permissions.PermissionRepository;
 import uk.co.eightmile.racs.roles.dtos.GetRolesResponse;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.roles.dtos.RoleRequestQueryParams;
+import uk.co.eightmile.racs.roles.exceptions.RoleNotFoundException;
 import uk.co.eightmile.racs.roles.specifications.RoleSpec;
 
 import java.util.List;
@@ -80,5 +81,47 @@ public class RoleServiceTest {
         assertThat(pageable.getPageNumber()).isEqualTo(0);
         assertThat(pageable.getPageSize()).isEqualTo(5);
         assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt"));
+    }
+
+    @Test
+    void getRoleById() {
+        // Arrange
+        var roleId = UUID.randomUUID();
+
+        var role = Role.builder()
+                .id(roleId)
+                .name("role-1")
+                .build();
+
+        var roleDto = new RoleDto();
+        roleDto.setId(roleId);
+        roleDto.setName(role.getName());
+
+        when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
+        when(roleMapper.toDto(role)).thenReturn(roleDto);
+
+        // Act
+        var response = roleService.getRoleById(roleId);
+
+        // Assert
+        assertThat(response.getRole()).isSameAs(roleDto);
+        assertThat(response.getMessage()).isEqualTo("Role fetched successfully");
+
+        verify(roleRepository).findById(roleId);
+    }
+
+    @Test
+    void getRoleByIdThrowsWhenNotFound() {
+        // Arrange
+        var roleId = UUID.randomUUID();
+
+        when(roleRepository.findById(roleId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> roleService.getRoleById(roleId))
+                .isInstanceOf(RoleNotFoundException.class)
+                .hasMessage("Role not found");
+
+        verifyNoInteractions(roleMapper);
     }
 }
