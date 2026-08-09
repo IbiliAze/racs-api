@@ -377,4 +377,80 @@ public class UserServiceTest {
         verify(userRepository, never()).save(any());
         verifyNoInteractions(passwordEncoder);
     }
+
+    @Test
+    void registerUser() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setFirstName("first-name");
+        request.setLastName("last-name");
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+        request.setInactive(false);
+
+        var user = buildUser(UUID.randomUUID());
+        var userDto = buildUserDto(user.getId());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
+        when(passwordEncoder.encode("password")).thenReturn("encoded-password");
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.registerUser(request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User created successfully");
+        assertThat(user.getPassword()).isEqualTo("encoded-password");
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void registerUserIgnoresCampaignId() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+        request.setCampaignId("campaign-1");
+
+        var user = buildUser(UUID.randomUUID());
+        var userDto = buildUserDto(user.getId());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
+        when(passwordEncoder.encode("password")).thenReturn("encoded-password");
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.registerUser(request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(user.getCampaign()).isNull();
+
+        verifyNoInteractions(campaignRepository);
+    }
+
+    @Test
+    void registerUserThrowsWhenEmailExists() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+
+        var user = buildUser(UUID.randomUUID());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.registerUser(request))
+                .isInstanceOf(UserExistsException.class)
+                .hasMessage("User already exists");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
+    }
 }
