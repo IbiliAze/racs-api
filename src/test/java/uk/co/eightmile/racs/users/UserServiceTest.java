@@ -21,6 +21,7 @@ import uk.co.eightmile.racs.auth.JwtService;
 import uk.co.eightmile.racs.auth.LoginType;
 import uk.co.eightmile.racs.auth.config.JwtConfig;
 import uk.co.eightmile.racs.auth.dtos.JwtPrincipalDto;
+import uk.co.eightmile.racs.common.dtos.UpdatePasswordRequest;
 import uk.co.eightmile.racs.common.exceptions.UnauthorizedException;
 import uk.co.eightmile.racs.campaigns.Campaign;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
@@ -1051,6 +1052,52 @@ public class UserServiceTest {
                 .hasMessage("Campaign not found");
 
         verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void updatePassword() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        var request = new UpdatePasswordRequest();
+        request.setPassword("new-password");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(passwordEncoder.encode("new-password")).thenReturn("encoded-new-password");
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.updatePassword(userId, request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User password updated successfully");
+        assertThat(user.getPassword()).isEqualTo("encoded-new-password");
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void updatePasswordThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var request = new UpdatePasswordRequest();
+        request.setPassword("new-password");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updatePassword(userId, request))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
         verifyNoInteractions(userMapper);
     }
 }
