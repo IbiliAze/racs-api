@@ -20,11 +20,14 @@ import uk.co.eightmile.racs.roles.RoleMapper;
 import uk.co.eightmile.racs.roles.RoleRepository;
 import uk.co.eightmile.racs.users.dtos.UserDto;
 import uk.co.eightmile.racs.users.dtos.UserRequestQueryParams;
+import uk.co.eightmile.racs.users.exceptions.UserNotFoundException;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -107,5 +110,41 @@ public class UserServiceTest {
         assertThat(pageable.getPageNumber()).isEqualTo(0);
         assertThat(pageable.getPageSize()).isEqualTo(5);
         assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.ASC, "email"));
+    }
+
+    @Test
+    void getUserById() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.getUserById(userId);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User fetched successfully");
+
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    void getUserByIdThrowsWhenNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.getUserById(userId))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(userMapper);
     }
 }
