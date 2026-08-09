@@ -16,6 +16,8 @@ import uk.co.eightmile.racs.auth.AuthenticationService;
 import uk.co.eightmile.racs.auth.JwtService;
 import uk.co.eightmile.racs.auth.config.JwtConfig;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
+import uk.co.eightmile.racs.permissions.Authority;
+import uk.co.eightmile.racs.permissions.Permission;
 import uk.co.eightmile.racs.roles.Role;
 import uk.co.eightmile.racs.roles.RoleMapper;
 import uk.co.eightmile.racs.roles.RoleRepository;
@@ -226,5 +228,45 @@ public class UserServiceTest {
                 .hasMessage("User not found");
 
         verifyNoInteractions(roleMapper);
+    }
+
+    @Test
+    void getUserPermissions() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var permission = Permission.builder().id(Authority.ADMIN).build();
+
+        var role = Role.builder()
+                .id(UUID.randomUUID())
+                .name("role-1")
+                .permissions(Set.of(permission))
+                .build();
+
+        var user = buildUser(userId);
+        user.setRoles(new LinkedHashSet<>(Set.of(role)));
+
+        when(userRepository.findUserWithRolesAndPermissions(userId)).thenReturn(Optional.of(user));
+
+        // Act
+        var permissions = userService.getUserPermissions(userId);
+
+        // Assert
+        assertThat(permissions).containsExactly(permission);
+
+        verify(userRepository).findUserWithRolesAndPermissions(userId);
+    }
+
+    @Test
+    void getUserPermissionsThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findUserWithRolesAndPermissions(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.getUserPermissions(userId))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
     }
 }
