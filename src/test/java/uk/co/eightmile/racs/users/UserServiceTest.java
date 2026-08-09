@@ -147,4 +147,36 @@ public class UserServiceTest {
 
         verifyNoInteractions(userMapper);
     }
+
+    @Test
+    void getUserAuth() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        when(authService.getCurrentUser()).thenReturn(user);
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.getUserAuth();
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User authentication details fetched successfully");
+    }
+
+    @Test
+    void getUserAuthThrowsWhenNoCurrentUser() {
+        // Arrange
+        when(authService.getCurrentUser()).thenReturn(null);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.getUserAuth())
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(userMapper);
+    }
 }
