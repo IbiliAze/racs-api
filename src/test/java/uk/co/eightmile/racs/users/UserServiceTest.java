@@ -16,14 +16,18 @@ import uk.co.eightmile.racs.auth.AuthenticationService;
 import uk.co.eightmile.racs.auth.JwtService;
 import uk.co.eightmile.racs.auth.config.JwtConfig;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
+import uk.co.eightmile.racs.roles.Role;
 import uk.co.eightmile.racs.roles.RoleMapper;
 import uk.co.eightmile.racs.roles.RoleRepository;
+import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.users.dtos.UserDto;
 import uk.co.eightmile.racs.users.dtos.UserRequestQueryParams;
 import uk.co.eightmile.racs.users.exceptions.UserNotFoundException;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -178,5 +182,49 @@ public class UserServiceTest {
                 .hasMessage("User not found");
 
         verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void getUserRoles() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var role = Role.builder()
+                .id(UUID.randomUUID())
+                .name("role-1")
+                .build();
+
+        var user = buildUser(userId);
+        user.setRoles(new LinkedHashSet<>(Set.of(role)));
+
+        var roleDto = new RoleDto();
+        roleDto.setId(role.getId());
+        roleDto.setName(role.getName());
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleMapper.toDto(role)).thenReturn(roleDto);
+
+        // Act
+        var roles = userService.getUserRoles(userId);
+
+        // Assert
+        assertThat(roles).containsExactly(roleDto);
+
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    void getUserRolesThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.getUserRoles(userId))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(roleMapper);
     }
 }
