@@ -836,4 +836,72 @@ public class UserServiceTest {
         verify(userRepository, never()).save(any());
         verifyNoInteractions(userMapper);
     }
+
+    @Test
+    void removeRole() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var role = Role.builder()
+                .id(UUID.randomUUID())
+                .name("role-1")
+                .users(new LinkedHashSet<>())
+                .build();
+
+        var user = buildUser(userId);
+        user.addRole(role);
+
+        var userDto = buildUserDto(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findById(role.getId())).thenReturn(Optional.of(role));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.removeRole(userId, role.getId());
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User role removed successfully");
+        assertThat(user.getRoles()).isEmpty();
+        assertThat(role.getUsers()).isEmpty();
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void removeRoleThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.removeRole(userId, UUID.randomUUID()))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(roleRepository);
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void removeRoleThrowsWhenRoleNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+        var roleId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findById(roleId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.removeRole(userId, roleId))
+                .isInstanceOf(RoleNotFoundException.class)
+                .hasMessage("Role not found");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
 }
