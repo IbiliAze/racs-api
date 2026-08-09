@@ -33,6 +33,7 @@ import uk.co.eightmile.racs.roles.RoleRepository;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.roles.exceptions.RoleNotFoundException;
 import uk.co.eightmile.racs.users.dtos.CreateUserRequest;
+import uk.co.eightmile.racs.users.dtos.UpdateUserRequest;
 import uk.co.eightmile.racs.users.dtos.UpdateUserRolesRequest;
 import uk.co.eightmile.racs.users.dtos.UserDto;
 import uk.co.eightmile.racs.users.dtos.UserLoginRequest;
@@ -900,6 +901,154 @@ public class UserServiceTest {
         assertThatThrownBy(() -> userService.removeRole(userId, roleId))
                 .isInstanceOf(RoleNotFoundException.class)
                 .hasMessage("Role not found");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
+
+    private UpdateUserRequest buildUpdateRequest(String email) {
+        var request = new UpdateUserRequest();
+        request.setFirstName("new-first-name");
+        request.setLastName("new-last-name");
+        request.setEmail(email);
+        request.setInactive(false);
+
+        return request;
+    }
+
+    @Test
+    void updateUser() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        var request = buildUpdateRequest("new-user@example.com");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.existsByEmail("new-user@example.com")).thenReturn(false);
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.updateUser(userId, request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User updated successfully");
+
+        verify(userMapper).update(request, user);
+        verify(userRepository).save(user);
+        verifyNoInteractions(campaignRepository);
+    }
+
+    @Test
+    void updateUserAllowsUnchangedEmail() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        var request = buildUpdateRequest(user.getEmail());
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.updateUser(userId, request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+
+        verify(userRepository, never()).existsByEmail(any());
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void updateUserAssignsCampaign() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var campaign = new Campaign();
+        campaign.setId("campaign-1");
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        var request = buildUpdateRequest(user.getEmail());
+        request.setCampaignId("campaign-1");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(campaignRepository.findById("campaign-1")).thenReturn(Optional.of(campaign));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.updateUser(userId, request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(user.getCampaign()).isSameAs(campaign);
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void updateUserThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var request = buildUpdateRequest("new-user@example.com");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updateUser(userId, request))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void updateUserThrowsWhenEmailTaken() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+
+        var request = buildUpdateRequest("taken@example.com");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.existsByEmail("taken@example.com")).thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updateUser(userId, request))
+                .isInstanceOf(UserExistsException.class)
+                .hasMessage("User already exists");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void updateUserThrowsWhenCampaignNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+
+        var request = buildUpdateRequest(user.getEmail());
+        request.setCampaignId("campaign-1");
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(campaignRepository.findById("campaign-1")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updateUser(userId, request))
+                .isInstanceOf(CampaignNotFoundException.class)
+                .hasMessage("Campaign not found");
 
         verify(userRepository, never()).save(any());
         verifyNoInteractions(userMapper);
