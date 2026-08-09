@@ -1100,4 +1100,42 @@ public class UserServiceTest {
         verifyNoInteractions(passwordEncoder);
         verifyNoInteractions(userMapper);
     }
+
+    @Test
+    void deleteUser() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.deleteUser(userId);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User deleted successfully");
+
+        verify(userRepository).findById(userId);
+        verify(userRepository).delete(user);
+    }
+
+    @Test
+    void deleteUserThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.deleteUser(userId))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verify(userRepository, never()).delete(any(User.class));
+        verifyNoInteractions(userMapper);
+    }
 }
