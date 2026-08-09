@@ -31,7 +31,9 @@ import uk.co.eightmile.racs.roles.Role;
 import uk.co.eightmile.racs.roles.RoleMapper;
 import uk.co.eightmile.racs.roles.RoleRepository;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
+import uk.co.eightmile.racs.roles.exceptions.RoleNotFoundException;
 import uk.co.eightmile.racs.users.dtos.CreateUserRequest;
+import uk.co.eightmile.racs.users.dtos.UpdateUserRolesRequest;
 import uk.co.eightmile.racs.users.dtos.UserDto;
 import uk.co.eightmile.racs.users.dtos.UserLoginRequest;
 import uk.co.eightmile.racs.users.dtos.UserRequestQueryParams;
@@ -677,6 +679,83 @@ public class UserServiceTest {
                 .hasMessage("Unauthorized");
 
         verify(jwtService, never()).generateAccessToken(any());
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void updateRoles() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var existingRole = Role.builder().id(UUID.randomUUID()).name("old-role").build();
+        var newRole = Role.builder().id(UUID.randomUUID()).name("new-role").build();
+
+        var user = buildUser(userId);
+        user.setRoles(new LinkedHashSet<>(Set.of(existingRole)));
+
+        var request = UpdateUserRolesRequest.builder()
+                .roleIds(List.of(newRole.getId()))
+                .build();
+
+        var userDto = buildUserDto(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findAllById(request.getRoleIds())).thenReturn(List.of(newRole));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.updateRoles(userId, request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("1 roles updated successfully");
+        assertThat(user.getRoles()).containsExactly(newRole);
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void updateRolesThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var request = UpdateUserRolesRequest.builder()
+                .roleIds(List.of(UUID.randomUUID()))
+                .build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updateRoles(userId, request))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(roleRepository);
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void updateRolesThrowsWhenRoleNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var role = Role.builder().id(UUID.randomUUID()).name("role-1").build();
+
+        var user = buildUser(userId);
+
+        var request = UpdateUserRolesRequest.builder()
+                .roleIds(List.of(role.getId(), UUID.randomUUID()))
+                .build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findAllById(request.getRoleIds())).thenReturn(List.of(role));
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.updateRoles(userId, request))
+                .isInstanceOf(RoleNotFoundException.class)
+                .hasMessage("Role not found");
+
+        verify(userRepository, never()).save(any());
         verifyNoInteractions(userMapper);
     }
 }
