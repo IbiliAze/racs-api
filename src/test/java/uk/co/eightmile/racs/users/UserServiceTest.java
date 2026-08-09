@@ -15,15 +15,19 @@ import uk.co.eightmile.racs.auth.AuthService;
 import uk.co.eightmile.racs.auth.AuthenticationService;
 import uk.co.eightmile.racs.auth.JwtService;
 import uk.co.eightmile.racs.auth.config.JwtConfig;
+import uk.co.eightmile.racs.campaigns.Campaign;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
+import uk.co.eightmile.racs.campaigns.exceptions.CampaignNotFoundException;
 import uk.co.eightmile.racs.permissions.Authority;
 import uk.co.eightmile.racs.permissions.Permission;
 import uk.co.eightmile.racs.roles.Role;
 import uk.co.eightmile.racs.roles.RoleMapper;
 import uk.co.eightmile.racs.roles.RoleRepository;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
+import uk.co.eightmile.racs.users.dtos.CreateUserRequest;
 import uk.co.eightmile.racs.users.dtos.UserDto;
 import uk.co.eightmile.racs.users.dtos.UserRequestQueryParams;
+import uk.co.eightmile.racs.users.exceptions.UserExistsException;
 import uk.co.eightmile.racs.users.exceptions.UserNotFoundException;
 
 import java.util.LinkedHashSet;
@@ -268,5 +272,109 @@ public class UserServiceTest {
         assertThatThrownBy(() -> userService.getUserPermissions(userId))
                 .isInstanceOf(UserNotFoundException.class)
                 .hasMessage("User not found");
+    }
+
+    @Test
+    void createUser() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setFirstName("first-name");
+        request.setLastName("last-name");
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+        request.setInactive(false);
+
+        var user = buildUser(UUID.randomUUID());
+        var userDto = buildUserDto(user.getId());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
+        when(passwordEncoder.encode("password")).thenReturn("encoded-password");
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.createUser(request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("User created successfully");
+        assertThat(user.getPassword()).isEqualTo("encoded-password");
+
+        verify(userRepository).save(user);
+        verifyNoInteractions(campaignRepository);
+    }
+
+    @Test
+    void createUserAssignsCampaign() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+        request.setCampaignId("campaign-1");
+
+        var campaign = new Campaign();
+        campaign.setId("campaign-1");
+
+        var user = buildUser(UUID.randomUUID());
+        var userDto = buildUserDto(user.getId());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
+        when(campaignRepository.findById("campaign-1")).thenReturn(Optional.of(campaign));
+        when(passwordEncoder.encode("password")).thenReturn("encoded-password");
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.createUser(request);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(user.getCampaign()).isSameAs(campaign);
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void createUserThrowsWhenEmailExists() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+
+        var user = buildUser(UUID.randomUUID());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.createUser(request))
+                .isInstanceOf(UserExistsException.class)
+                .hasMessage("User already exists");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    void createUserThrowsWhenCampaignNotFound() {
+        // Arrange
+        var request = new CreateUserRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+        request.setCampaignId("campaign-1");
+
+        var user = buildUser(UUID.randomUUID());
+
+        when(userMapper.toEntity(request)).thenReturn(user);
+        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
+        when(campaignRepository.findById("campaign-1")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.createUser(request))
+                .isInstanceOf(CampaignNotFoundException.class)
+                .hasMessage("Campaign not found");
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
     }
 }
