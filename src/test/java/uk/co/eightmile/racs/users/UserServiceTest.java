@@ -582,4 +582,101 @@ public class UserServiceTest {
         verifyNoInteractions(jwtService);
         verifyNoInteractions(httpResponse);
     }
+
+    @Test
+    void refreshToken() {
+        // Arrange
+        var userId = UUID.randomUUID();
+        var user = buildUser(userId);
+        var jwtPrincipal = JwtPrincipalDto.builder().id(userId).build();
+
+        var refreshToken = mock(Jwt.class);
+        var accessToken = mock(Jwt.class);
+
+        when(jwtService.parseToken("refresh-token")).thenReturn(refreshToken);
+        when(refreshToken.isExpired()).thenReturn(false);
+        when(refreshToken.getPrincipalId()).thenReturn(userId);
+        when(userRepository.findUserWithRolesAndPermissions(userId)).thenReturn(Optional.of(user));
+        when(userMapper.toJwtPrincipal(user)).thenReturn(jwtPrincipal);
+        when(jwtService.generateAccessToken(jwtPrincipal)).thenReturn(accessToken);
+        when(accessToken.toString()).thenReturn("access-token");
+
+        // Act
+        var response = userService.refreshToken("refresh-token");
+
+        // Assert
+        assertThat(response.getToken()).isEqualTo("access-token");
+        assertThat(response.getMessage()).isEqualTo("Token refreshed successfully");
+    }
+
+    @Test
+    void refreshTokenThrowsWhenTokenIsInvalid() {
+        // Arrange
+        when(jwtService.parseToken("invalid-token")).thenReturn(null);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.refreshToken("invalid-token"))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void refreshTokenThrowsWhenTokenIsExpired() {
+        // Arrange
+        var refreshToken = mock(Jwt.class);
+
+        when(jwtService.parseToken("expired-token")).thenReturn(refreshToken);
+        when(refreshToken.isExpired()).thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.refreshToken("expired-token"))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void refreshTokenThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+        var refreshToken = mock(Jwt.class);
+
+        when(jwtService.parseToken("refresh-token")).thenReturn(refreshToken);
+        when(refreshToken.isExpired()).thenReturn(false);
+        when(refreshToken.getPrincipalId()).thenReturn(userId);
+        when(userRepository.findUserWithRolesAndPermissions(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.refreshToken("refresh-token"))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verify(jwtService, never()).generateAccessToken(any());
+    }
+
+    @Test
+    void refreshTokenThrowsWhenUserInactive() {
+        // Arrange
+        var userId = UUID.randomUUID();
+        var user = buildUser(userId);
+        user.setInactive(true);
+
+        var refreshToken = mock(Jwt.class);
+
+        when(jwtService.parseToken("refresh-token")).thenReturn(refreshToken);
+        when(refreshToken.isExpired()).thenReturn(false);
+        when(refreshToken.getPrincipalId()).thenReturn(userId);
+        when(userRepository.findUserWithRolesAndPermissions(userId)).thenReturn(Optional.of(user));
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.refreshToken("refresh-token"))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verify(jwtService, never()).generateAccessToken(any());
+        verifyNoInteractions(userMapper);
+    }
 }
