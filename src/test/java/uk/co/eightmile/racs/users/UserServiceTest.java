@@ -3,6 +3,8 @@ package uk.co.eightmile.racs.users;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
@@ -10,11 +12,16 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import uk.co.eightmile.racs.auth.AuthService;
 import uk.co.eightmile.racs.auth.AuthenticationService;
+import uk.co.eightmile.racs.auth.Jwt;
 import uk.co.eightmile.racs.auth.JwtService;
+import uk.co.eightmile.racs.auth.LoginType;
 import uk.co.eightmile.racs.auth.config.JwtConfig;
+import uk.co.eightmile.racs.auth.dtos.JwtPrincipalDto;
+import uk.co.eightmile.racs.common.exceptions.UnauthorizedException;
 import uk.co.eightmile.racs.campaigns.Campaign;
 import uk.co.eightmile.racs.campaigns.CampaignRepository;
 import uk.co.eightmile.racs.campaigns.exceptions.CampaignNotFoundException;
@@ -26,6 +33,7 @@ import uk.co.eightmile.racs.roles.RoleRepository;
 import uk.co.eightmile.racs.roles.dtos.RoleDto;
 import uk.co.eightmile.racs.users.dtos.CreateUserRequest;
 import uk.co.eightmile.racs.users.dtos.UserDto;
+import uk.co.eightmile.racs.users.dtos.UserLoginRequest;
 import uk.co.eightmile.racs.users.dtos.UserRequestQueryParams;
 import uk.co.eightmile.racs.users.exceptions.UserExistsException;
 import uk.co.eightmile.racs.users.exceptions.UserNotFoundException;
@@ -452,5 +460,126 @@ public class UserServiceTest {
 
         verify(userRepository, never()).save(any());
         verifyNoInteractions(passwordEncoder);
+    }
+
+    private UserLoginRequest buildLoginRequest() {
+        var request = new UserLoginRequest();
+        request.setEmail("user@example.com");
+        request.setPassword("password");
+
+        return request;
+    }
+
+    private UserDetails buildUserDetails() {
+        return new org.springframework.security.core.userdetails.User(
+                "user@example.com", "encoded-password", List.of());
+    }
+
+    @Test
+    void login() {
+        // Arrange
+        var request = buildLoginRequest();
+        var httpResponse = mock(HttpServletResponse.class);
+
+        var user = buildUser(UUID.randomUUID());
+        var jwtPrincipal = JwtPrincipalDto.builder().id(user.getId()).build();
+
+        var accessToken = mock(Jwt.class);
+        var refreshToken = mock(Jwt.class);
+
+        when(authenticationService.loadUserByUsernameAndType("user@example.com", LoginType.USER))
+                .thenReturn(buildUserDetails());
+        when(passwordEncoder.matches("password", "encoded-password")).thenReturn(true);
+        when(userRepository.findUserWithRolesAndPermissionsByEmail("user@example.com"))
+                .thenReturn(Optional.of(user));
+        when(userMapper.toJwtPrincipal(user)).thenReturn(jwtPrincipal);
+        when(jwtService.generateAccessToken(jwtPrincipal)).thenReturn(accessToken);
+        when(jwtService.generateRefreshToken(jwtPrincipal)).thenReturn(refreshToken);
+        when(accessToken.toString()).thenReturn("access-token");
+        when(refreshToken.toString()).thenReturn("refresh-token");
+        when(jwtConfig.getRefreshTokenExpiration()).thenReturn(604800);
+        when(jwtConfig.isRefreshCookieSecure()).thenReturn(true);
+
+        // Act
+        var response = userService.login(request, httpResponse);
+
+        // Assert
+        assertThat(response.getToken()).isEqualTo("access-token");
+        assertThat(response.getMessage()).isEqualTo("Logged in successfully");
+
+        var cookieCaptor = ArgumentCaptor.forClass(Cookie.class);
+        verify(httpResponse).addCookie(cookieCaptor.capture());
+
+        var cookie = cookieCaptor.getValue();
+        assertThat(cookie.getName()).isEqualTo("refreshToken");
+        assertThat(cookie.getValue()).isEqualTo("refresh-token");
+        assertThat(cookie.isHttpOnly()).isTrue();
+        assertThat(cookie.getPath()).isEqualTo("/api/user/token/refresh");
+        assertThat(cookie.getMaxAge()).isEqualTo(604800);
+        assertThat(cookie.getSecure()).isTrue();
+    }
+
+    @Test
+    void loginThrowsWhenPasswordDoesNotMatch() {
+        // Arrange
+        var request = buildLoginRequest();
+        var httpResponse = mock(HttpServletResponse.class);
+
+        when(authenticationService.loadUserByUsernameAndType("user@example.com", LoginType.USER))
+                .thenReturn(buildUserDetails());
+        when(passwordEncoder.matches("password", "encoded-password")).thenReturn(false);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.login(request, httpResponse))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verifyNoInteractions(jwtService);
+        verifyNoInteractions(httpResponse);
+    }
+
+    @Test
+    void loginThrowsWhenUserNotFound() {
+        // Arrange
+        var request = buildLoginRequest();
+        var httpResponse = mock(HttpServletResponse.class);
+
+        when(authenticationService.loadUserByUsernameAndType("user@example.com", LoginType.USER))
+                .thenReturn(buildUserDetails());
+        when(passwordEncoder.matches("password", "encoded-password")).thenReturn(true);
+        when(userRepository.findUserWithRolesAndPermissionsByEmail("user@example.com"))
+                .thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.login(request, httpResponse))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verifyNoInteractions(jwtService);
+        verifyNoInteractions(httpResponse);
+    }
+
+    @Test
+    void loginThrowsWhenUserInactive() {
+        // Arrange
+        var request = buildLoginRequest();
+        var httpResponse = mock(HttpServletResponse.class);
+
+        var user = buildUser(UUID.randomUUID());
+        user.setInactive(true);
+
+        when(authenticationService.loadUserByUsernameAndType("user@example.com", LoginType.USER))
+                .thenReturn(buildUserDetails());
+        when(passwordEncoder.matches("password", "encoded-password")).thenReturn(true);
+        when(userRepository.findUserWithRolesAndPermissionsByEmail("user@example.com"))
+                .thenReturn(Optional.of(user));
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.login(request, httpResponse))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Unauthorized");
+
+        verifyNoInteractions(jwtService);
+        verifyNoInteractions(httpResponse);
     }
 }
