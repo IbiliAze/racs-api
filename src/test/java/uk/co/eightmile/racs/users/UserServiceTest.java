@@ -758,4 +758,82 @@ public class UserServiceTest {
         verify(userRepository, never()).save(any());
         verifyNoInteractions(userMapper);
     }
+
+    @Test
+    void addRoles() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        var firstRole = Role.builder()
+                .id(UUID.randomUUID())
+                .name("role-1")
+                .users(new LinkedHashSet<>())
+                .build();
+
+        var secondRole = Role.builder()
+                .id(UUID.randomUUID())
+                .name("role-2")
+                .users(new LinkedHashSet<>())
+                .build();
+
+        var user = buildUser(userId);
+        var userDto = buildUserDto(userId);
+
+        var roleIds = List.of(firstRole.getId(), secondRole.getId());
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findById(firstRole.getId())).thenReturn(Optional.of(firstRole));
+        when(roleRepository.findById(secondRole.getId())).thenReturn(Optional.of(secondRole));
+        when(userMapper.toDto(user)).thenReturn(userDto);
+
+        // Act
+        var response = userService.addRoles(userId, roleIds);
+
+        // Assert
+        assertThat(response.getUser()).isSameAs(userDto);
+        assertThat(response.getMessage()).isEqualTo("2 roles added successfully");
+        assertThat(user.getRoles()).containsExactly(firstRole, secondRole);
+        assertThat(firstRole.getUsers()).containsExactly(user);
+        assertThat(secondRole.getUsers()).containsExactly(user);
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void addRolesThrowsWhenUserNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.addRoles(userId, List.of(UUID.randomUUID())))
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found");
+
+        verifyNoInteractions(roleRepository);
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void addRolesThrowsWhenRoleNotFound() {
+        // Arrange
+        var userId = UUID.randomUUID();
+        var roleId = UUID.randomUUID();
+
+        var user = buildUser(userId);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(roleRepository.findById(roleId)).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.addRoles(userId, List.of(roleId)))
+                .isInstanceOf(RoleNotFoundException.class)
+                .hasMessage("Role not found");
+
+        assertThat(user.getRoles()).isEmpty();
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(userMapper);
+    }
 }
