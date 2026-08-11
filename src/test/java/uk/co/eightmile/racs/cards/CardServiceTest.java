@@ -33,6 +33,7 @@ import uk.co.eightmile.racs.scans.FlagType;
 import uk.co.eightmile.racs.scans.ScanRepository;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -368,7 +369,7 @@ class CardServiceTest {
         requestB.setValue("B");
         requestB.setLabel("Label B");
 
-        // Already persisted, so it must be skipped
+        // Already persisted, so it is echoed back rather than created again
         var requestC = new CreateCardRequest();
         requestC.setCampaignId(campaignId);
         requestC.setValue("C");
@@ -377,7 +378,13 @@ class CardServiceTest {
         var request = new CreateCardsRequest();
         request.setCards(List.of(requestA, requestADuplicate, requestB, requestC));
 
-        var existingCardC = Card.builder().id(UUID.randomUUID()).value("C").campaign(campaign).build();
+        // No metadata on requestC, so the stored metadata must survive untouched
+        var existingCardC = Card.builder()
+                .id(UUID.randomUUID())
+                .value("C")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(Map.of("origin", "db")))
+                .build();
 
         var cardA = Card.builder().id(UUID.randomUUID()).value("A").label("Label A").build();
         var cardB = Card.builder().id(UUID.randomUUID()).value("B").label("Label B").build();
@@ -386,6 +393,10 @@ class CardServiceTest {
         dtoA.setId(cardA.getId());
         var dtoB = new CardDto();
         dtoB.setId(cardB.getId());
+        var dtoC = new CardDto();
+        dtoC.setId(existingCardC.getId());
+
+        var enrichedIds = Set.of(cardA.getId(), cardB.getId(), existingCardC.getId());
 
         when(cardRepository.findByValueIn(Set.of("A", "B", "C"))).thenReturn(List.of(existingCardC));
         when(campaignRepository.findAllById(Set.of(campaignId))).thenReturn(List.of(campaign));
@@ -394,26 +405,28 @@ class CardServiceTest {
         when(cardMapper.toEntity(requestB)).thenReturn(cardB);
         when(cardRepository.saveAndFlush(cardA)).thenReturn(cardA);
         when(cardRepository.saveAndFlush(cardB)).thenReturn(cardB);
-        when(scanRepository.findUsedCardIds(Set.of(cardA.getId(), cardB.getId()), PASSING_FLAGS))
-                .thenReturn(Set.of());
-        when(scanRepository.findUsedAtByCardIds(Set.of(cardA.getId(), cardB.getId()), PASSING_FLAGS))
-                .thenReturn(List.of());
+        when(scanRepository.findUsedCardIds(enrichedIds, PASSING_FLAGS)).thenReturn(Set.of());
+        when(scanRepository.findUsedAtByCardIds(enrichedIds, PASSING_FLAGS)).thenReturn(List.of());
         when(cardMapper.toDto(cardA)).thenReturn(dtoA);
         when(cardMapper.toDto(cardB)).thenReturn(dtoB);
+        when(cardMapper.toDto(existingCardC)).thenReturn(dtoC);
 
         // Act
         var response = cardService.createCards(request);
 
         // Assert
-        assertThat(response.getCards()).containsExactly(dtoA, dtoB);
-        assertThat(response.getMessage()).isEqualTo("2 cards created");
+        // Created cards first, then the existing ones in request order
+        assertThat(response.getCards()).containsExactly(dtoA, dtoB, dtoC);
+        assertThat(response.getMessage()).isEqualTo("2 cards created, 0 updated");
         assertThat(cardA.getCampaign()).isSameAs(campaign);
         assertThat(cardB.getCampaign()).isSameAs(campaign);
+        assertThat(existingCardC.getMetadata()).isEqualTo(Map.of("origin", "db"));
 
-        // The in-request duplicate and the already-persisted value never reach the mapper or repository
+        // The in-request duplicate and the already-persisted value never reach toEntity
         verify(cardMapper, never()).toEntity(requestADuplicate);
         verify(cardMapper, never()).toEntity(requestC);
         verify(cardRepository, times(2)).saveAndFlush(any(Card.class));
+        verify(cardRepository, never()).saveAndFlush(existingCardC);
 
         // The campaign already existed, so nothing is created
         verify(campaignRepository, never()).save(any());
@@ -421,11 +434,111 @@ class CardServiceTest {
 
         verify(notificationPublisher).publishEvent(new CardUpdate(dtoA, CardAction.created));
         verify(notificationPublisher).publishEvent(new CardUpdate(dtoB, CardAction.created));
+        verify(notificationPublisher, times(2)).publishEvent(any(CardUpdate.class));
     }
 
     @Test
-    void createCardsSkipsEverythingWhenAllValuesExist() {
+    void createCardsCreatesNothingWhenAllValuesExistWithMatchingMetadata() {
         // Arrange
+        var campaign = campaign("c1");
+        Map<String, Object> metadata = Map.of("locationId", "Gate 1");
+
+        var cardRequest = new CreateCardRequest();
+        cardRequest.setCampaignId("c1");
+        cardRequest.setValue("A");
+        cardRequest.setLabel("Label A");
+        cardRequest.setMetadata(metadata);
+
+        var request = new CreateCardsRequest();
+        request.setCards(List.of(cardRequest));
+
+        // Equal content in a different instance: there is nothing to write back
+        var existing = Card.builder()
+                .id(UUID.randomUUID())
+                .value("A")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(metadata))
+                .build();
+
+        var dto = new CardDto();
+        dto.setId(existing.getId());
+
+        when(cardRepository.findByValueIn(Set.of("A"))).thenReturn(List.of(existing));
+        // Nothing to create, so the batch campaign lookup runs on an empty id set
+        when(campaignRepository.findAllById(Set.of())).thenReturn(List.of());
+        stubEnrichment(existing, dto);
+
+        // Act
+        var response = cardService.createCards(request);
+
+        // Assert
+        // The card is still echoed back: callers match the response to their payload by value
+        assertThat(response.getCards()).containsExactly(dto);
+        assertThat(response.getMessage()).isEqualTo("0 cards created, 0 updated");
+        assertThat(existing.getMetadata()).isEqualTo(metadata);
+
+        verify(cardRepository, never()).saveAndFlush(any());
+        verify(cardMapper, never()).toEntity(any(CreateCardRequest.class));
+        verifyNoInteractions(notificationPublisher, campaignMapper, locationMapper);
+    }
+
+    @Test
+    void createCardsRefreshesMetadataOnExistingCards() {
+        // Arrange
+        var campaign = campaign("c1");
+        Map<String, Object> metadata = Map.of("campaignName", "Autumn Campaign");
+
+        var cardRequest = new CreateCardRequest();
+        cardRequest.setCampaignId("c1");
+        cardRequest.setValue("A");
+        cardRequest.setLabel("Label A");
+        cardRequest.setMetadata(metadata);
+
+        var request = new CreateCardsRequest();
+        request.setCards(List.of(cardRequest));
+
+        var existing = Card.builder()
+                .id(UUID.randomUUID())
+                .value("A")
+                .label("Stored label")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(Map.of("campaignName", "Spring Campaign")))
+                .build();
+
+        var dto = new CardDto();
+        dto.setId(existing.getId());
+
+        when(cardRepository.findByValueIn(Set.of("A"))).thenReturn(List.of(existing));
+        when(campaignRepository.findAllById(Set.of())).thenReturn(List.of());
+        when(cardRepository.saveAndFlush(existing)).thenReturn(existing);
+        stubEnrichment(existing, dto);
+
+        // Act
+        var response = cardService.createCards(request);
+
+        // Assert
+        assertThat(response.getCards()).containsExactly(dto);
+        assertThat(response.getMessage()).isEqualTo("0 cards created, 1 updated");
+
+        // Metadata is copied, not aliased to the request map
+        assertThat(existing.getMetadata()).isEqualTo(metadata).isNotSameAs(metadata);
+
+        // Only metadata is refreshed; the stored label and campaign are left alone
+        assertThat(existing.getLabel()).isEqualTo("Stored label");
+        assertThat(existing.getCampaign()).isSameAs(campaign);
+
+        verify(cardRepository).saveAndFlush(existing);
+        verify(cardMapper, never()).toEntity(any(CreateCardRequest.class));
+        verify(notificationPublisher).publishEvent(new CardUpdate(dto, CardAction.updated));
+        verify(notificationPublisher, times(1)).publishEvent(any(CardUpdate.class));
+        verifyNoInteractions(campaignMapper, locationMapper);
+    }
+
+    @Test
+    void createCardsIgnoresNullMetadataOnExistingCards() {
+        // Arrange
+        var campaign = campaign("c1");
+
         var cardRequest = new CreateCardRequest();
         cardRequest.setCampaignId("c1");
         cardRequest.setValue("A");
@@ -434,19 +547,158 @@ class CardServiceTest {
         var request = new CreateCardsRequest();
         request.setCards(List.of(cardRequest));
 
-        var existing = Card.builder().id(UUID.randomUUID()).value("A").build();
+        var storedMetadata = new LinkedHashMap<String, Object>(Map.of("locationId", "Gate 1"));
+
+        var existing = Card.builder()
+                .id(UUID.randomUUID())
+                .value("A")
+                .campaign(campaign)
+                .metadata(storedMetadata)
+                .build();
+
+        var dto = new CardDto();
+        dto.setId(existing.getId());
 
         when(cardRepository.findByValueIn(Set.of("A"))).thenReturn(List.of(existing));
+        when(campaignRepository.findAllById(Set.of())).thenReturn(List.of());
+        stubEnrichment(existing, dto);
 
         // Act
         var response = cardService.createCards(request);
 
         // Assert
-        assertThat(response.getCards()).isEmpty();
-        assertThat(response.getMessage()).isEqualTo("0 cards created");
+        // A payload without metadata cannot blank out what is already stored
+        assertThat(existing.getMetadata()).isSameAs(storedMetadata);
+        assertThat(response.getMessage()).isEqualTo("0 cards created, 0 updated");
 
         verify(cardRepository, never()).saveAndFlush(any());
-        verifyNoInteractions(cardMapper, scanRepository, notificationPublisher);
+        verifyNoInteractions(notificationPublisher);
+    }
+
+    @Test
+    void createCardsMixesCreatedUpdatedAndUntouchedCards() {
+        // Arrange
+        var campaignId = "c1";
+        var campaign = campaign(campaignId);
+
+        var newRequest = new CreateCardRequest();
+        newRequest.setCampaignId(campaignId);
+        newRequest.setValue("N");
+        newRequest.setLabel("Label N");
+
+        var updatedRequest = new CreateCardRequest();
+        updatedRequest.setCampaignId(campaignId);
+        updatedRequest.setValue("U");
+        updatedRequest.setLabel("Label U");
+        updatedRequest.setMetadata(Map.of("seat", "12B"));
+
+        var untouchedRequest = new CreateCardRequest();
+        untouchedRequest.setCampaignId(campaignId);
+        untouchedRequest.setValue("T");
+        untouchedRequest.setLabel("Label T");
+        untouchedRequest.setMetadata(Map.of("seat", "3A"));
+
+        var request = new CreateCardsRequest();
+        request.setCards(List.of(newRequest, updatedRequest, untouchedRequest));
+
+        var newCard = Card.builder().id(UUID.randomUUID()).value("N").label("Label N").build();
+        var updatedCard = Card.builder()
+                .id(UUID.randomUUID())
+                .value("U")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(Map.of("seat", "1A")))
+                .build();
+        var untouchedCard = Card.builder()
+                .id(UUID.randomUUID())
+                .value("T")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(Map.of("seat", "3A")))
+                .build();
+
+        var newDto = new CardDto();
+        newDto.setId(newCard.getId());
+        var updatedDto = new CardDto();
+        updatedDto.setId(updatedCard.getId());
+        var untouchedDto = new CardDto();
+        untouchedDto.setId(untouchedCard.getId());
+
+        var enrichedIds = Set.of(newCard.getId(), updatedCard.getId(), untouchedCard.getId());
+
+        when(cardRepository.findByValueIn(Set.of("N", "U", "T")))
+                .thenReturn(List.of(updatedCard, untouchedCard));
+        when(campaignRepository.findAllById(Set.of(campaignId))).thenReturn(List.of(campaign));
+        when(cardMapper.toEntity(newRequest)).thenReturn(newCard);
+        when(cardRepository.saveAndFlush(newCard)).thenReturn(newCard);
+        when(cardRepository.saveAndFlush(updatedCard)).thenReturn(updatedCard);
+        when(scanRepository.findUsedCardIds(enrichedIds, PASSING_FLAGS)).thenReturn(Set.of());
+        when(scanRepository.findUsedAtByCardIds(enrichedIds, PASSING_FLAGS)).thenReturn(List.of());
+        when(cardMapper.toDto(newCard)).thenReturn(newDto);
+        when(cardMapper.toDto(updatedCard)).thenReturn(updatedDto);
+        when(cardMapper.toDto(untouchedCard)).thenReturn(untouchedDto);
+
+        // Act
+        var response = cardService.createCards(request);
+
+        // Assert
+        assertThat(response.getCards()).containsExactly(newDto, updatedDto, untouchedDto);
+        assertThat(response.getMessage()).isEqualTo("1 cards created, 1 updated");
+        assertThat(updatedCard.getMetadata()).isEqualTo(Map.of("seat", "12B"));
+        assertThat(untouchedCard.getMetadata()).isEqualTo(Map.of("seat", "3A"));
+
+        verify(cardRepository, times(2)).saveAndFlush(any(Card.class));
+        verify(cardRepository, never()).saveAndFlush(untouchedCard);
+
+        // Each card gets the action that matches what actually happened to it, and nothing else
+        verify(notificationPublisher).publishEvent(new CardUpdate(newDto, CardAction.created));
+        verify(notificationPublisher).publishEvent(new CardUpdate(updatedDto, CardAction.updated));
+        verify(notificationPublisher, times(2)).publishEvent(any(CardUpdate.class));
+    }
+
+    @Test
+    void createCardsDoesNotBootstrapCampaignOrLocationForExistingCards() {
+        // Arrange
+        var campaignId = "c9";
+        var campaign = campaign(campaignId);
+
+        Map<String, Object> metadata = Map.of("campaignName", "Autumn Campaign", "locationId", "Gate 9");
+
+        var cardRequest = new CreateCardRequest();
+        cardRequest.setCampaignId(campaignId);
+        cardRequest.setValue("X");
+        cardRequest.setLabel("Label X");
+        cardRequest.setMetadata(metadata);
+
+        var request = new CreateCardsRequest();
+        request.setCards(List.of(cardRequest));
+
+        var existing = Card.builder()
+                .id(UUID.randomUUID())
+                .value("X")
+                .campaign(campaign)
+                .metadata(new LinkedHashMap<>(Map.of("locationId", "Gate 1")))
+                .build();
+
+        var dto = new CardDto();
+        dto.setId(existing.getId());
+
+        when(cardRepository.findByValueIn(Set.of("X"))).thenReturn(List.of(existing));
+        when(campaignRepository.findAllById(Set.of())).thenReturn(List.of());
+        when(cardRepository.saveAndFlush(existing)).thenReturn(existing);
+        stubEnrichment(existing, dto);
+
+        // Act
+        var response = cardService.createCards(request);
+
+        // Assert
+        assertThat(response.getMessage()).isEqualTo("0 cards created, 1 updated");
+        assertThat(existing.getMetadata()).isEqualTo(metadata);
+
+        // Campaign and location bootstrapping is driven by the cards being created, never by existing ones,
+        // so the campaign name and locationId in this payload create nothing
+        verify(locationRepository).findByNameIn(Set.of());
+        verify(campaignRepository, never()).save(any());
+        verify(locationRepository, never()).save(any());
+        verifyNoInteractions(campaignMapper, locationMapper);
     }
 
     @Test
@@ -507,7 +759,7 @@ class CardServiceTest {
         var response = cardService.createCards(request);
 
         // Assert
-        assertThat(response.getMessage()).isEqualTo("1 cards created");
+        assertThat(response.getMessage()).isEqualTo("1 cards created, 0 updated");
         assertThat(response.getCards()).containsExactly(cardDto);
 
         // The client-supplied campaign id wins over the generated one
@@ -569,7 +821,7 @@ class CardServiceTest {
         var response = cardService.createCards(request);
 
         // Assert
-        assertThat(response.getMessage()).isEqualTo("1 cards created");
+        assertThat(response.getMessage()).isEqualTo("1 cards created, 0 updated");
 
         var campaignRequestCaptor = ArgumentCaptor.forClass(CreateCampaignRequest.class);
         verify(campaignMapper).toEntity(campaignRequestCaptor.capture());

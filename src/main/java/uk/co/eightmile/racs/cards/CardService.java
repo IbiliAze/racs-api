@@ -106,16 +106,15 @@ public class CardService {
     }
 
     public CardsAddedResponse createCards(CreateCardsRequest request) {
-        // De-dupe by value within the request, then drop values that already exist in the DB
+        // De-dupe by value within the request; values already in the DB are upserted rather than skipped
         Map<String, CreateCardRequest> uniqueByValue = new LinkedHashMap<>();
         request.getCards().forEach(t -> uniqueByValue.putIfAbsent(t.getValue(), t));
 
-        Set<String> existingValues = cardRepository.findByValueIn(uniqueByValue.keySet()).stream()
-                .map(Card::getValue)
-                .collect(Collectors.toSet());
+        Map<String, Card> existingByValue = cardRepository.findByValueIn(uniqueByValue.keySet()).stream()
+                .collect(Collectors.toMap(Card::getValue, t -> t));
 
         List<CreateCardRequest> toCreate = uniqueByValue.values().stream()
-                .filter(t -> !existingValues.contains(t.getValue()))
+                .filter(t -> !existingByValue.containsKey(t.getValue()))
                 .toList();
 
         Set<String> campaignIds = toCreate.stream()
@@ -133,7 +132,7 @@ public class CardService {
         Map<String, Location> locationMap = new HashMap<>();
         locationRepository.findByNameIn(locationNames).forEach(v -> locationMap.put(v.getName(), v));
 
-        List<Card> savedCards = toCreate.stream()
+        List<Card> createdCards = toCreate.stream()
                 .map(t -> {
                     var metadata = t.getMetadata();
 
@@ -152,13 +151,40 @@ public class CardService {
                 })
                 .toList();
 
-        List<CardDto> validNewCards = enrichCards(savedCards);
-        validNewCards.forEach(dto ->
-                notificationPublisher.publishEvent(new CardUpdate(dto, CardAction.created)));
+        // Existing cards keep their campaign/label/type; only metadata is refreshed from the payload
+        List<Card> existingCards = new ArrayList<>();
+        List<Card> updatedCards = new ArrayList<>();
+        uniqueByValue.values().forEach(t -> {
+            Card existing = existingByValue.get(t.getValue());
+            if (existing == null) return;
+
+            Map<String, Object> metadata = t.getMetadata();
+            if (metadata != null && !metadata.equals(existing.getMetadata())) {
+                existing.setMetadata(new LinkedHashMap<>(metadata));
+                updatedCards.add(cardRepository.saveAndFlush(existing));
+            }
+            existingCards.add(existing);
+        });
+
+        // Callers match cards back by value, so every requested card is echoed, created or not
+        List<Card> allCards = new ArrayList<>(createdCards);
+        allCards.addAll(existingCards);
+
+        Set<UUID> createdIds = createdCards.stream().map(Card::getId).collect(Collectors.toSet());
+        Set<UUID> updatedIds = updatedCards.stream().map(Card::getId).collect(Collectors.toSet());
+
+        List<CardDto> dtos = enrichCards(allCards);
+        dtos.forEach(dto -> {
+            if (createdIds.contains(dto.getId())) {
+                notificationPublisher.publishEvent(new CardUpdate(dto, CardAction.created));
+            } else if (updatedIds.contains(dto.getId())) {
+                notificationPublisher.publishEvent(new CardUpdate(dto, CardAction.updated));
+            }
+        });
 
         var response = new CardsAddedResponse();
-        response.setCards(validNewCards);
-        response.setMessage(validNewCards.size() + " cards created");
+        response.setCards(dtos);
+        response.setMessage(createdCards.size() + " cards created, " + updatedCards.size() + " updated");
 
         return response;
     }

@@ -5,6 +5,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.Named;
+import org.mapstruct.NullValuePropertyMappingStrategy;
 
 @Mapper(componentModel = "spring")
 public interface CardMapper {
@@ -30,6 +31,8 @@ public interface CardMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "campaign", ignore = true)
     @Mapping(target = "type", source = "type", qualifiedByName = "stringToType")
+    // Omitting metadata leaves the stored metadata alone; it can no longer be cleared through an update
+    @Mapping(target = "metadata", nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void update(UpdateCardRequest request, @MappingTarget Card card);
 
     @Named("typeToString")
