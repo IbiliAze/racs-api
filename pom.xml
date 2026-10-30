@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.3</version>
+        <version>4.0.9</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>uk.co.eightmile</groupId>
@@ -151,6 +151,15 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- The parent configures it: every build writes the resolved dependency list to
+                 target/classes/META-INF/sbom/application.cdx.json, so the jar carries its own
+                 SBOM. The test:audit CI job checks that file against OSV. Actuator's sbom
+                 endpoint stays unexposed (management exposes only health). -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
             </plugin>
 
             <plugin>

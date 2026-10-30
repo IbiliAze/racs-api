@@ -1,0 +1,6 @@
+# Java matches the eclipse-temurin:25 images in the Dockerfile and CI and
+# <java.version>25</java.version> in pom.xml; Maven matches
+# .mvn/wrapper/maven-wrapper.properties, so mvn and ./mvnw agree.
+[tools]
+java = "temurin-25"
+maven = "3.9.12"
